@@ -20,7 +20,7 @@ func TestServerOptions(t *testing.T) {
 		WithCompression(CompressionDisabled, 0),
 	}
 
-	srv := httptest.NewServer(NewHandler(testHandler, opts...))
+	srv := httptest.NewServer(NewHandler(HandlerFunc(testHandler), opts...))
 	defer srv.Close()
 
 	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
@@ -33,7 +33,7 @@ func TestServerOptions(t *testing.T) {
 }
 
 func TestErrMessage(t *testing.T) {
-	srv := httptest.NewServer(NewHandler(testHandler))
+	srv := httptest.NewServer(NewHandler(HandlerFunc(testHandler)))
 	defer srv.Close()
 
 	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
@@ -91,12 +91,12 @@ func TestErrMessage(t *testing.T) {
 	t.Log(serr)
 }
 
-func errHandler(ctx context.Context, req *Request) (*Response, error) {
-	return nil, errors.New("test error from message handler")
+func errHandler(*Stream, *Request) error {
+	return errors.New("test error from handler")
 }
 
 func TestHandlerError(t *testing.T) {
-	srv := httptest.NewServer(NewHandler(errHandler))
+	srv := httptest.NewServer(NewHandler(HandlerFunc(errHandler)))
 	defer srv.Close()
 
 	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
@@ -170,9 +170,7 @@ func TestServerLoad(t *testing.T) {
 	}
 
 	mux := http.DefaultServeMux
-	mux.Handle("/graphql", NewHandler(func(ctx context.Context, req *Request) (*Response, error) {
-		return testHandler(ctx, req)
-	}))
+	mux.Handle("/graphql", NewHandler(HandlerFunc(testHandler)))
 
 	srv := &http.Server{
 		Handler: mux,
@@ -192,18 +190,22 @@ func TestServerLoad(t *testing.T) {
 }
 
 func ExampleNewHandler() {
-	h := func(ctx context.Context, req *Request) (*Response, error) {
-		// Should observe ctx in case it gets cancelled.
+	h := func(s *Stream, req *Request) error {
+		// Remember to always close the stream when done sending.
+		defer s.Close()
 
 		// Use your choice of a GraphQL runtime to execute the query
 		// Then, return the results JSON encoded with a *Response.
-		return &Response{Data: []byte(`{"hello":{"world":"this is example data"}}`)}, nil
+		r := &Response{
+			Data: []byte(`{"hello":{"world":"this is example data"}}`),
+		}
+		return s.Send(context.TODO(), r)
 	}
 
 	// Simply register the handler with a http mux of your choice
 	// and it will handle the rest.
 	//
-	http.Handle("graphql", NewHandler(MessageHandler(h)))
+	http.Handle("graphql", NewHandler(HandlerFunc(h)))
 
 	err := http.ListenAndServe(":80", nil)
 	if err != nil {

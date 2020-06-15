@@ -9,12 +9,14 @@ import (
 	"time"
 )
 
-func testHandler(ctx context.Context, req *Request) (*Response, error) {
-	return &Response{Data: []byte(`{"hello":{"world":"this is a test"}}`)}, nil
+func testHandler(stream *Stream, req *Request) error {
+	defer stream.Close()
+
+	return stream.Send(context.TODO(), &Response{Data: []byte(`{"hello":{"world":"this is a test"}}`)})
 }
 
 func TestE2E(t *testing.T) {
-	srv := httptest.NewServer(NewHandler(testHandler))
+	srv := httptest.NewServer(NewHandler(HandlerFunc(testHandler)))
 	defer srv.Close()
 
 	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
@@ -51,7 +53,7 @@ func TestE2E(t *testing.T) {
 }
 
 func TestConcurrency(t *testing.T) {
-	srv := httptest.NewServer(NewHandler(testHandler))
+	srv := httptest.NewServer(NewHandler(HandlerFunc(testHandler)))
 	defer srv.Close()
 
 	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
@@ -104,7 +106,7 @@ func TestConcurrency(t *testing.T) {
 }
 
 func BenchmarkE2E(b *testing.B) {
-	srv := httptest.NewServer(NewHandler(testHandler))
+	srv := httptest.NewServer(NewHandler(HandlerFunc(testHandler)))
 	defer srv.Close()
 
 	b.RunParallel(func(pb *testing.PB) {

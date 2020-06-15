@@ -28,10 +28,9 @@ func TestCloseDuringInFlightQuery(t *testing.T) {
 	var conn *Conn
 	var err error
 
-	srv := httptest.NewServer(NewHandler(func(_ context.Context, req *Request) (*Response, error) {
-		conn.Close()
-		return nil, nil
-	}))
+	srv := httptest.NewServer(NewHandler(HandlerFunc(func(_ *Stream, req *Request) error {
+		return conn.Close()
+	})))
 	defer srv.Close()
 
 	conn, err = Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
@@ -59,7 +58,7 @@ func TestCloseDuringInFlightQuery(t *testing.T) {
 }
 
 func TestHandleServerError(t *testing.T) {
-	srv := httptest.NewServer(NewHandler(errHandler))
+	srv := httptest.NewServer(NewHandler(HandlerFunc(errHandler)))
 	defer srv.Close()
 
 	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
@@ -89,10 +88,10 @@ func TestHandleServerError(t *testing.T) {
 func TestContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	srv := httptest.NewServer(NewHandler(func(_ context.Context, req *Request) (*Response, error) {
+	srv := httptest.NewServer(NewHandler(HandlerFunc(func(_ *Stream, req *Request) error {
 		cancel()
-		return nil, nil
-	}))
+		return nil
+	})))
 	defer srv.Close()
 
 	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
