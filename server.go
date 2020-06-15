@@ -7,21 +7,6 @@ import (
 	"nhooyr.io/websocket"
 )
 
-type option func(*websocket.AcceptOptions)
-
-// WithSubprotocols specifies the server's supported protocols in order of
-// preference. If this field is not nil, then the Upgrade method negotiates a
-// subprotocol by selecting the first match in this list with a protocol
-// requested by the client. If there's no match, then no protocol is
-// negotiated (the Sec-Websocket-Protocol header is not included in the
-// handshake response).
-//
-func WithSubprotocols(protocols ...string) option {
-	return func(up *websocket.AcceptOptions) {
-		up.Subprotocols = append(up.Subprotocols, protocols...)
-	}
-}
-
 // MessageHandler is a user provided function for handling
 // incoming GraphQL queries. All other "GraphQL over Websocket"
 // protocol messages are automatically handled internally.
@@ -29,6 +14,12 @@ func WithSubprotocols(protocols ...string) option {
 // any validation error should be returned as error.
 //
 type MessageHandler func(context.Context, *Request) (*Response, error)
+
+type options struct {
+}
+
+// ServerOption allows the user to configure the handler.
+type ServerOption func(*options)
 
 type handler struct {
 	*websocket.AcceptOptions
@@ -39,16 +30,19 @@ type handler struct {
 // NewHandler configures an http.Handler, which will upgrade
 // incoming connections to websocket.
 //
-func NewHandler(h MessageHandler, opts ...option) http.Handler {
-	up := &websocket.AcceptOptions{
-		Subprotocols: []string{"graphql-ws"},
-	}
+func NewHandler(h MessageHandler, opts ...ServerOption) http.Handler {
+	sopts := &options{}
 
 	for _, opt := range opts {
-		opt(up)
+		opt(sopts)
 	}
 
-	return &handler{AcceptOptions: up, msgHandler: h}
+	return &handler{
+		AcceptOptions: &websocket.AcceptOptions{
+			Subprotocols: []string{"graphql-ws"},
+		},
+		msgHandler: h,
+	}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
