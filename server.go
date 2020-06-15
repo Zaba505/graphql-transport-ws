@@ -16,19 +16,32 @@ import (
 type MessageHandler func(context.Context, *Request) (*Response, error)
 
 type options struct {
+	origins   []string
+	mode      websocket.CompressionMode
+	threshold int
 }
 
 // ServerOption allows the user to configure the handler.
 type ServerOption func(*options)
 
+// WithOrigins lists the host patterns for authorized origins.
+// The request host is always authorized. Use this to allow
+// cross origin WebSockets.
+//
+func WithOrigins(origins ...string) ServerOption {
+	return func(opts *options) {
+		opts.origins = origins
+	}
+}
+
 type handler struct {
-	*websocket.AcceptOptions
+	wcOptions *websocket.AcceptOptions
 
 	msgHandler MessageHandler
 }
 
 // NewHandler configures an http.Handler, which will upgrade
-// incoming connections to websocket.
+// incoming connections to WebSocket and serve the "graphql-ws" subprotocol.
 //
 func NewHandler(h MessageHandler, opts ...ServerOption) http.Handler {
 	sopts := &options{}
@@ -38,15 +51,18 @@ func NewHandler(h MessageHandler, opts ...ServerOption) http.Handler {
 	}
 
 	return &handler{
-		AcceptOptions: &websocket.AcceptOptions{
-			Subprotocols: []string{"graphql-ws"},
+		wcOptions: &websocket.AcceptOptions{
+			Subprotocols:         []string{"graphql-ws"},
+			OriginPatterns:       sopts.origins,
+			CompressionMode:      sopts.mode,
+			CompressionThreshold: sopts.threshold,
 		},
 		msgHandler: h,
 	}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	wc, err := websocket.Accept(w, req, h.AcceptOptions)
+	wc, err := websocket.Accept(w, req, h.wcOptions)
 	if err != nil {
 		// TODO: Handle error
 		return
