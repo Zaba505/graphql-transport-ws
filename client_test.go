@@ -233,7 +233,7 @@ func TestMalformedMessage(t *testing.T) {
 	}
 }
 
-func ExampleClient() {
+func ExampleClient_Query() {
 	conn, err := Dial(context.TODO(), "ws://example.com")
 	if err != nil {
 		// Make sure to handle the error
@@ -264,7 +264,7 @@ func ExampleClient() {
 	// Now, exampleResp.Hello.World would be your query result.
 }
 
-func ExampleConcurrentQueries() {
+func ExampleClient_Query_concurrent() {
 	conn, err := Dial(context.TODO(), "ws://example.com")
 	if err != nil {
 		// Make sure to handle the error
