@@ -13,6 +13,31 @@ import (
 type Client interface {
 	// Query provides an RPC like API for performing GraphQL queries.
 	Query(context.Context, *Request) (*Response, error)
+
+	// Subscribe provides an RPC like API for performing GraphQL subscription queries.
+	Subscribe(context.Context, *Request) (*Subscription, error)
+}
+
+// Subscription represents a stream of results corresponding to a GraphQL subscription query.
+type Subscription struct{}
+
+// Recv is a blocking call which waits for either a response from the
+// server or the context to be cancelled. Context cancellation does
+// not cancel the subscription as a whole just the current recv call.
+//
+// Recv is safe for concurrent use but it is a first come first serve
+// basis. In other words, the response is not duplicated across all
+// receivers.
+//
+func (s *Subscription) Recv(ctx context.Context) (*Response, error) {
+	return nil, nil
+}
+
+// Unsubscribe tells the server to stop sending anymore results
+// and cleans up any resources associated with the subscription.
+//
+func (s *Subscription) Unsubscribe() error {
+	return nil
 }
 
 // NewClient takes a connection and initializes a client over it.
@@ -250,6 +275,10 @@ func (c *client) Query(ctx context.Context, req *Request) (*Response, error) {
 		}
 		return resp.resp, resp.err
 	}
+}
+
+func (c *client) Subscribe(ctx context.Context, req *Request) (*Subscription, error) {
+	return nil, nil
 }
 
 func stopReq(conn *Conn, id opID, respCh <-chan qResp) {
