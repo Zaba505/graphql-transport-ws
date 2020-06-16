@@ -26,14 +26,25 @@ func (f HandlerFunc) ServeGraphQL(s *Stream, req *Request) error {
 	return f(s, req)
 }
 
-// Stream is used for streaming response back to the client.
+// Stream is used for streaming responses back to the client.
 type Stream struct {
 	conn *Conn
+	id   opID
+
+	done chan struct{}
 }
 
-// Send
+// Send sends a response to the client. It is safe for concurrent use.
 func (s *Stream) Send(ctx context.Context, resp *Response) error {
-	return nil
+	select {
+	case <-s.done:
+		// TODO
+		return nil
+	default:
+	}
+
+	err := s.conn.write(ctx, operationMessage{ID: s.id, Type: gqlData, Payload: resp})
+	return err
 }
 
 // Close notifies the client that no more results will be sent
@@ -42,7 +53,9 @@ func (s *Stream) Send(ctx context.Context, resp *Response) error {
 // prevent any leaks.
 //
 func (s *Stream) Close() error {
-	return nil
+	close(s.done)
+
+	return s.conn.write(context.TODO(), operationMessage{ID: s.id, Type: gqlComplete})
 }
 
 type options struct {
@@ -148,7 +161,13 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func handleRequest(conn *Conn, h Handler, id opID, req *Request) {
-	err := h.ServeGraphQL(&Stream{conn: conn}, req)
+	s := &Stream{
+		id:   id,
+		conn: conn,
+		done: make(chan struct{}, 1),
+	}
+
+	err := h.ServeGraphQL(s, req)
 	if err != nil {
 		conn.write(context.TODO(), operationMessage{
 			ID:      id,
