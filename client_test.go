@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -55,6 +56,170 @@ func TestCloseDuringInFlightQuery(t *testing.T) {
 		t.Fail()
 		return
 	}
+}
+
+func TestSubscription_CompleteDuringInFlightRecv(t *testing.T) {
+	srv := httptest.NewServer(NewHandler(HandlerFunc(func(s *Stream, req *Request) error {
+		return s.Close()
+	})))
+	defer srv.Close()
+
+	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client := NewClient(conn)
+	sub, err := client.Subscribe(ctx, &Request{Query: "{ hello { world } }"})
+	if err != nil {
+		t.Log("unexpected error", err)
+		t.Fail()
+		return
+	}
+	defer sub.Unsubscribe()
+
+	_, err = sub.Recv(context.TODO())
+	if err == nil {
+		t.Log("expected error")
+		t.Fail()
+		return
+	}
+}
+
+func TestSubscription_UnsubscribeDuringInFlightRecv(t *testing.T) {
+	done := make(chan struct{})
+	connected := make(chan struct{})
+
+	srv := httptest.NewServer(NewHandler(HandlerFunc(func(s *Stream, req *Request) error {
+		close(connected)
+		<-done
+		return s.Close()
+	})))
+	defer srv.Close()
+
+	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client := NewClient(conn)
+	sub, err := client.Subscribe(ctx, &Request{Query: "{ hello { world } }"})
+	if err != nil {
+		t.Log("unexpected error", err)
+		t.Fail()
+		return
+	}
+
+	go func() {
+		<-connected
+		sub.Unsubscribe()
+		close(done)
+	}()
+
+	_, err = sub.Recv(context.TODO())
+	if err == nil {
+		t.Log("expected error")
+		t.Fail()
+		return
+	}
+}
+
+func TestSubscription_ConcurrentRecv(t *testing.T) {
+	srv := httptest.NewServer(NewHandler(HandlerFunc(func(s *Stream, req *Request) error {
+		defer s.Close()
+
+		s.Send(context.TODO(), &Response{Data: []byte(`{"hello":{"world":"one"}}`)})
+		s.Send(context.TODO(), &Response{Data: []byte(`{"hello":{"world":"two"}}`)})
+
+		return nil
+	})))
+	defer srv.Close()
+
+	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client := NewClient(conn)
+	sub, err := client.Subscribe(ctx, &Request{Query: "{ hello { world } }"})
+	if err != nil {
+		t.Log("unexpected error", err)
+		t.Fail()
+		return
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+
+		resp, err := sub.Recv(context.TODO())
+		if err != nil {
+			t.Log("unexpected error", err)
+			t.Fail()
+			return
+		}
+
+		var testResp struct {
+			Hello struct {
+				World string `json:"world"`
+			} `json:"hello"`
+		}
+		err = json.Unmarshal(resp.Data, &testResp)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		t.Log(testResp)
+		if testResp.Hello.World != "one" && testResp.Hello.World != "two" {
+			t.Fail()
+			return
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		resp, err := sub.Recv(context.TODO())
+		if err != nil {
+			t.Log("unexpected error", err)
+			t.Fail()
+			return
+		}
+
+		var testResp struct {
+			Hello struct {
+				World string `json:"world"`
+			} `json:"hello"`
+		}
+		err = json.Unmarshal(resp.Data, &testResp)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		t.Log(testResp)
+		if testResp.Hello.World != "one" && testResp.Hello.World != "two" {
+			t.Fail()
+			return
+		}
+	}()
+
+	wg.Wait()
 }
 
 func TestHandleServerError(t *testing.T) {

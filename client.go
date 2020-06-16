@@ -11,7 +11,7 @@ import (
 )
 
 // ErrUnsubscribed is return by a subscription receive when the subscription
-// is ubsubscribed before the next response is received.
+// is ubsubscribed or completed before the next response is received.
 //
 var ErrUnsubscribed = errors.New("gws: received cancelled due to unsubscribe")
 
@@ -26,6 +26,7 @@ type Client interface {
 
 // Subscription represents a stream of results corresponding to a GraphQL subscription query.
 type Subscription struct {
+	conn   *Conn
 	id     opID
 	respCh <-chan qResp
 
@@ -44,7 +45,7 @@ type Subscription struct {
 func (s *Subscription) Recv(ctx context.Context) (*Response, error) {
 	select {
 	case <-s.done:
-		return nil, nil
+		return nil, ErrUnsubscribed
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case resp, ok := <-s.respCh:
@@ -60,6 +61,21 @@ func (s *Subscription) Recv(ctx context.Context) (*Response, error) {
 //
 func (s *Subscription) Unsubscribe() error {
 	close(s.done)
+
+	select {
+	case <-s.respCh:
+		// Already completed by the server
+		return nil
+	default:
+	}
+
+	err := s.conn.write(context.TODO(), operationMessage{ID: s.id, Type: gqlStop})
+	if err != nil {
+		return ErrIO{
+			Msg: "failed to send stop message for: " + string(s.id),
+			Err: err,
+		}
+	}
 	return nil
 }
 
@@ -333,6 +349,7 @@ func (c *client) Subscribe(ctx context.Context, req *Request) (*Subscription, er
 	}
 
 	return &Subscription{
+		conn:   c.conn,
 		id:     oid,
 		respCh: respCh,
 		done:   make(chan struct{}, 1),
