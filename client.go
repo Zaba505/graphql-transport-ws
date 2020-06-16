@@ -3,11 +3,17 @@ package gws
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// ErrUnsubscribed is return by a subscription receive when the subscription
+// is ubsubscribed before the next response is received.
+//
+var ErrUnsubscribed = errors.New("gws: received cancelled due to unsubscribe")
 
 // Client provides high-level API for making GraphQL requests over WebSocket.
 type Client interface {
@@ -19,7 +25,13 @@ type Client interface {
 }
 
 // Subscription represents a stream of results corresponding to a GraphQL subscription query.
-type Subscription struct{}
+type Subscription struct {
+	id     opID
+	respCh <-chan qResp
+
+	// used to cancel in-flight recv on unsubscribe
+	done chan struct{}
+}
 
 // Recv is a blocking call which waits for either a response from the
 // server or the context to be cancelled. Context cancellation does
@@ -30,13 +42,24 @@ type Subscription struct{}
 // receivers.
 //
 func (s *Subscription) Recv(ctx context.Context) (*Response, error) {
-	return nil, nil
+	select {
+	case <-s.done:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case resp, ok := <-s.respCh:
+		if !ok {
+			return nil, ErrUnsubscribed
+		}
+		return resp.resp, resp.err
+	}
 }
 
 // Unsubscribe tells the server to stop sending anymore results
 // and cleans up any resources associated with the subscription.
 //
 func (s *Subscription) Unsubscribe() error {
+	close(s.done)
 	return nil
 }
 
@@ -278,7 +301,42 @@ func (c *client) Query(ctx context.Context, req *Request) (*Response, error) {
 }
 
 func (c *client) Subscribe(ctx context.Context, req *Request) (*Subscription, error) {
-	return nil, nil
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-c.ready:
+		break
+	case <-c.done:
+		return nil, c.err
+	}
+
+	id := atomic.AddUint64(&c.id, 1)
+	oid := opID(strconv.FormatUint(id, 10))
+	msg := operationMessage{
+		ID:      oid,
+		Type:    gqlStart,
+		Payload: req,
+	}
+
+	respCh := make(chan qResp, 1)
+
+	c.subsMu.Lock()
+	c.subs[oid] = respCh
+	c.subsMu.Unlock()
+
+	err := c.conn.write(ctx, msg)
+	if err != nil {
+		return nil, ErrIO{
+			Msg: "failed to send query",
+			Err: err,
+		}
+	}
+
+	return &Subscription{
+		id:     oid,
+		respCh: respCh,
+		done:   make(chan struct{}, 1),
+	}, nil
 }
 
 func stopReq(conn *Conn, id opID, respCh <-chan qResp) {
