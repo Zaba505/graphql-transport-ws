@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	_ "net/http/pprof"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"nhooyr.io/websocket"
 )
@@ -30,6 +32,98 @@ func TestServerOptions(t *testing.T) {
 	}
 
 	conn.Close()
+}
+
+func TestStream_SendAfterClose(t *testing.T) {
+	srv := httptest.NewServer(NewHandler(HandlerFunc(func(s *Stream, req *Request) error {
+		s.Close()
+		err := s.Send(context.TODO(), &Response{Data: []byte(`{"hello":{"world":"1"}}`)})
+		if err == nil {
+			t.Log("expected error for sending after close")
+			t.Fail()
+		}
+		return nil
+	})))
+	defer srv.Close()
+
+	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client := NewClient(conn)
+	sub, err := client.Subscribe(ctx, &Request{Query: "{ hello { world } }"})
+	if err != nil {
+		t.Log("unexpected error", err)
+		t.Fail()
+		return
+	}
+	defer sub.Unsubscribe()
+
+	_, err = sub.Recv(context.TODO())
+	if err == nil {
+		t.Log("expected error")
+		t.Fail()
+		return
+	}
+}
+
+func TestStream_ConcurrentSend(t *testing.T) {
+	srv := httptest.NewServer(NewHandler(HandlerFunc(func(s *Stream, req *Request) error {
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		f := func() {
+			defer wg.Done()
+			err := s.Send(context.TODO(), &Response{Data: []byte(`{"hello":{"world":"1"}}`)})
+			if err != nil {
+				t.Log("expected error for sending after close")
+				t.Fail()
+			}
+		}
+
+		go f()
+		go f()
+
+		wg.Wait()
+
+		return s.Close()
+	})))
+	defer srv.Close()
+
+	conn, err := Dial(context.Background(), "ws://"+srv.Listener.Addr().String())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client := NewClient(conn)
+	sub, err := client.Subscribe(ctx, &Request{Query: "{ hello { world } }"})
+	if err != nil {
+		t.Log("unexpected error", err)
+		t.Fail()
+		return
+	}
+	defer sub.Unsubscribe()
+
+	for {
+		_, err = sub.Recv(context.TODO())
+		if err != nil && err != ErrUnsubscribed {
+			t.Log("expected error")
+			t.Fail()
+			return
+		}
+		if err == ErrUnsubscribed {
+			return
+		}
+	}
 }
 
 func TestErrMessage(t *testing.T) {
