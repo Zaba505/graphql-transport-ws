@@ -136,12 +136,16 @@ func TestStream_StopOnMessage(t *testing.T) {
 
 		<-unsubscribed
 
-		err := s.Send(context.TODO(), &Response{Data: []byte(`{"hello":{"world":"1"}}`)})
-		if err == nil {
-			t.Log("expected error for sending after client unsubscribed")
-			t.Fail()
+		for {
+			err := s.Send(context.TODO(), &Response{Data: []byte(`{"hello":{"world":"1"}}`)})
+			if err != nil && err != ErrStreamClosed {
+				t.Error(err)
+				return err
+			}
+			if err == ErrStreamClosed {
+				return nil
+			}
 		}
-		return nil
 	})))
 	defer srv.Close()
 
