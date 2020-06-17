@@ -90,6 +90,45 @@ func TestOpMessage_Unmarshal(t *testing.T) {
 	}
 }
 
+func TestOpMessage_MarshalJSON(t *testing.T) {
+	testCases := []struct {
+		Name string
+		Msg  operationMessage
+		Ex   string
+	}{
+		{
+			Name: "All Fields",
+			Msg:  operationMessage{ID: "1", Type: gqlData, Payload: &Request{Query: "{ hello { world } }"}},
+			Ex:   `{"id":"1","type":"data","payload":{"query":"{ hello { world } }"}}`,
+		},
+		{
+			Name: "Missing Payload",
+			Msg:  operationMessage{ID: "1", Type: gqlComplete},
+			Ex:   `{"id":"1","type":"complete"}`,
+		},
+		{
+			Name: "Only Type",
+			Msg:  operationMessage{Type: gqlConnectionInit},
+			Ex:   `{"type":"connection_init"}`,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.Name, func(subT *testing.T) {
+			b, err := json.Marshal(&testCase.Msg)
+			if err != nil {
+				subT.Error(err)
+				return
+			}
+
+			if !bytes.Equal(b, []byte(testCase.Ex)) {
+				subT.Fail()
+				return
+			}
+		})
+	}
+}
+
 const benchReq = `{
   "id": "1",
   "type": "start",
