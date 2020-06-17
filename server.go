@@ -2,10 +2,16 @@ package gws
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"nhooyr.io/websocket"
 )
+
+// ErrStreamClosed is returned by Send if the stream
+// is closed before Send is called.
+//
+var ErrStreamClosed = errors.New("gws: stream is closed")
 
 // Handler is for handling incoming GraphQL queries. All other
 // "GraphQL over Websocket" protocol messages are automatically
@@ -38,8 +44,7 @@ type Stream struct {
 func (s *Stream) Send(ctx context.Context, resp *Response) error {
 	select {
 	case <-s.done:
-		// TODO
-		return nil
+		return ErrStreamClosed
 	default:
 	}
 
