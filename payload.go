@@ -110,3 +110,7 @@ func (m *operationMessage) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("unsupported message type: %s", raw.Type)
 	}
 }
+
+func (m *operationMessage) MarshalJSON() ([]byte, error) {
+	return []byte("{}"), nil
+}
