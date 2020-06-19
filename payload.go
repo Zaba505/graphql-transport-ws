@@ -1,8 +1,10 @@
 package gws
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 )
 
 type reqType string
@@ -26,8 +28,8 @@ const (
 // Request represents a payload sent from the client.
 type Request struct {
 	Query         string                 `json:"query"`
-	Variables     map[string]interface{} `json:"variables"`
-	OperationName string                 `json:"operationName"`
+	Variables     map[string]interface{} `json:"variables,omitempty"`
+	OperationName string                 `json:"operationName,omitempty"`
 }
 
 // Response represents a payload returned from the server. It supports
@@ -35,7 +37,7 @@ type Request struct {
 //
 type Response struct {
 	Data   json.RawMessage   `json:"data"`
-	Errors []json.RawMessage `json:"errors"`
+	Errors []json.RawMessage `json:"errors,omitempty"`
 }
 
 // ServerError represents a payload which is sent by the server if
@@ -112,5 +114,80 @@ func (m *operationMessage) UnmarshalJSON(b []byte) error {
 }
 
 func (m *operationMessage) MarshalJSON() ([]byte, error) {
-	return []byte("{}"), nil
+	var b bytes.Buffer
+
+	b.Write([]byte("{"))
+
+	if m.ID != "" {
+		b.Write([]byte(`"id":"`))
+		b.Write([]byte(m.ID))
+		b.Write([]byte(`",`))
+	}
+
+	b.Write([]byte(`"type":"`))
+	b.Write([]byte(m.Type))
+	b.Write([]byte("\""))
+
+	if m.Payload != nil {
+		b.Write([]byte(`,"payload":`))
+		marshalPayload(&b, m.Payload)
+	}
+
+	b.Write([]byte("}"))
+
+	return b.Bytes(), nil
+}
+
+func marshalPayload(w io.Writer, payload payload) error {
+	switch v := payload.(type) {
+	case *Request:
+		w.Write([]byte(`{"query":"`))
+
+		w.Write([]byte(v.Query))
+		w.Write([]byte("\""))
+
+		if v.Variables != nil {
+			w.Write([]byte(`,"variables":`))
+			b, err := json.Marshal(v.Variables)
+			if err != nil {
+				return err
+			}
+
+			w.Write(b)
+		}
+
+		if v.OperationName != "" {
+			w.Write([]byte(`,"operationName":"`))
+			w.Write([]byte(v.OperationName))
+			w.Write([]byte("\""))
+		}
+
+		w.Write([]byte("}"))
+	case *Response:
+		w.Write([]byte(`{"data":`))
+		w.Write(v.Data)
+
+		if v.Errors != nil {
+			w.Write([]byte(`,"errors":[`))
+
+			l := len(v.Errors) - 1
+			for i, err := range v.Errors {
+				w.Write(err)
+
+				if i < l {
+					w.Write([]byte(","))
+				}
+			}
+
+			w.Write([]byte("]"))
+		}
+
+		w.Write([]byte("}"))
+	case *ServerError:
+		w.Write([]byte(`{"msg":"`))
+		w.Write([]byte(v.Msg))
+		w.Write([]byte(`"}`))
+	}
+
+	return nil
 }
