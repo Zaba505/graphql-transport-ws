@@ -2,6 +2,7 @@ package gws
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -140,7 +141,6 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}()
 
 	// Handle messages
-	msg := new(operationMessage)
 	for {
 		b, err := conn.read(ctx)
 		if err != nil {
@@ -148,7 +148,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		err = msg.UnmarshalJSON(b)
+		var msg operationMessage
+		err = json.Unmarshal(b, &msg)
 		if err != nil {
 			conn.write(ctx, operationMessage{
 				Type:    gqlError,
