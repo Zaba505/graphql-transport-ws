@@ -1,31 +1,22 @@
 package gws
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
-	"sync"
 
 	"nhooyr.io/websocket"
 )
 
 // Conn is a client connection that should be closed by the client.
 type Conn struct {
-	wc      *websocket.Conn
-	bufPool *sync.Pool
+	wc *websocket.Conn
 
 	done chan struct{}
 }
 
 func newConn(wc *websocket.Conn) *Conn {
 	c := &Conn{
-		wc: wc,
-		bufPool: &sync.Pool{
-			New: func() interface{} {
-				return new(bytes.Buffer)
-			},
-		},
+		wc:   wc,
 		done: make(chan struct{}, 1),
 	}
 
@@ -38,20 +29,12 @@ func (c *Conn) read(ctx context.Context) ([]byte, error) {
 }
 
 func (c *Conn) write(ctx context.Context, msg operationMessage) error {
-	buf := c.bufPool.Get().(*bytes.Buffer)
-	defer func() {
-		buf.Reset()
-		c.bufPool.Put(buf)
-	}()
-
-	enc := json.NewEncoder(buf)
-
-	err := enc.Encode(&msg)
+	b, err := msg.MarshalJSON()
 	if err != nil {
 		return err
 	}
 
-	return c.wc.Write(ctx, websocket.MessageBinary, buf.Bytes())
+	return c.wc.Write(ctx, websocket.MessageBinary, b)
 }
 
 // Close closes the underlying WebSocket connection.
