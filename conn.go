@@ -6,16 +6,22 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
+
+	"github.com/zaba505/gws/backoff"
+	internalbackoff "github.com/zaba505/gws/internal/backoff"
 
 	"nhooyr.io/websocket"
 )
 
 type dialOpts struct {
-	client      *http.Client
-	headers     http.Header
-	compression CompressionMode
-	threshold   int
-	typ         MessageType
+	bs                internalbackoff.Strategy
+	minConnectTimeout func() time.Duration
+	client            *http.Client
+	headers           http.Header
+	compression       CompressionMode
+	threshold         int
+	typ               MessageType
 }
 
 // DialOption configures how we set up the connection.
@@ -144,6 +150,36 @@ func WithHTTPClient(client *http.Client) DialOption {
 func WithHeaders(headers http.Header) DialOption {
 	return optionFn(func(opts *dialOpts) {
 		opts.headers = headers
+	})
+}
+
+// ConnectParams defines the parameters for connecting and retrying. Users are
+// encouraged to use this instead of the BackoffConfig type defined above. See
+// here for more details:
+// https://github.com/grpc/grpc/blob/master/doc/connection-backoff.md.
+//
+// This API is EXPERIMENTAL.
+type ConnectParams struct {
+	// Backoff specifies the configuration options for connection backoff.
+	Backoff backoff.Config
+	// MinConnectTimeout is the minimum amount of time we are willing to give a
+	// connection to complete.
+	MinConnectTimeout time.Duration
+}
+
+// DefaultConnectParams is a default configuration for retrying with a backoff.
+var DefaultConnectParams = ConnectParams{
+	Backoff:           backoff.DefaultConfig,
+	MinConnectTimeout: 1 * time.Minute,
+}
+
+// WithConnectParams configures the client to use the provided ConnectParams.
+func WithConnectParams(p ConnectParams) DialOption {
+	return optionFn(func(opts *dialOpts) {
+		opts.bs = internalbackoff.Exponential{Config: p.Backoff}
+		opts.minConnectTimeout = func() time.Duration {
+			return p.MinConnectTimeout
+		}
 	})
 }
 
