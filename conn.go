@@ -215,13 +215,15 @@ func newConn(wc *websocket.Conn, typ MessageType) *Conn {
 // happens in the background).
 //
 func Dial(ctx context.Context, endpoint string, opts ...DialOption) (*Conn, error) {
-	dopts := &dialOpts{
-		client: http.DefaultClient,
-		typ:    MessageBinary,
-		bs:     internalbackoff.DefaultExponential,
+	fopts := []DialOption{
+		WithHTTPClient(http.DefaultClient),
+		WithMessageType(MessageBinary),
+		WithConnectParams(DefaultConnectParams),
 	}
+	fopts = append(fopts, opts...)
 
-	for _, opt := range opts {
+	dopts := new(dialOpts)
+	for _, opt := range fopts {
 		opt.SetDial(dopts)
 	}
 
