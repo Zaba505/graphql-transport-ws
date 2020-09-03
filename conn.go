@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -13,6 +14,8 @@ import (
 
 	"nhooyr.io/websocket"
 )
+
+const minConnectTimeout = 20 * time.Second
 
 type dialOpts struct {
 	bs                internalbackoff.Strategy
@@ -215,13 +218,24 @@ func Dial(ctx context.Context, endpoint string, opts ...DialOption) (*Conn, erro
 	dopts := &dialOpts{
 		client: http.DefaultClient,
 		typ:    MessageBinary,
+		bs:     internalbackoff.DefaultExponential,
 	}
 
 	for _, opt := range opts {
 		opt.SetDial(dopts)
 	}
 
-	d := &websocket.DialOptions{
+	// TODO: Handle resp
+	wc, _, err := dial(ctx, endpoint, dopts)
+	if err != nil {
+		return nil, err
+	}
+
+	return newConn(wc, dopts.typ), nil
+}
+
+func dial(ctx context.Context, endpoint string, dopts *dialOpts) (wc *websocket.Conn, resp *http.Response, err error) {
+	opts := &websocket.DialOptions{
 		HTTPClient:           dopts.client,
 		HTTPHeader:           dopts.headers,
 		Subprotocols:         []string{"graphql-ws"},
@@ -229,13 +243,37 @@ func Dial(ctx context.Context, endpoint string, opts ...DialOption) (*Conn, erro
 		CompressionThreshold: dopts.threshold,
 	}
 
-	// TODO: Handle resp
-	wc, _, err := websocket.Dial(ctx, endpoint, d)
-	if err != nil {
-		return nil, err
-	}
+	backoffIdx := 0
+	for {
+		dialDuration := minConnectTimeout
+		if dopts.minConnectTimeout != nil {
+			dialDuration = dopts.minConnectTimeout()
+		}
 
-	return newConn(wc, dopts.typ), nil
+		backoffFor := dopts.bs.Backoff(backoffIdx) // TODO count backoff
+		if dialDuration < backoffFor {
+			dialDuration = backoffFor
+		}
+
+		dctx, cancel := context.WithTimeout(ctx, dialDuration)
+		wc, resp, err = websocket.Dial(dctx, endpoint, opts)
+		cancel()
+		if err == nil {
+			return
+		}
+		if ne, ok := err.(net.Error); !ok || (!ne.Timeout() && !ne.Temporary()) {
+			return
+		}
+
+		timer := time.NewTimer(dialDuration)
+		select {
+		case <-timer.C:
+			backoffIdx++
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		}
+	}
 }
 
 func (c *Conn) read(ctx context.Context) ([]byte, error) {
