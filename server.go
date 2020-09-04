@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"nhooyr.io/websocket"
 )
@@ -73,6 +74,8 @@ type options struct {
 	mode      CompressionMode
 	threshold int
 	typ       MessageType
+	keepAlive bool
+	period    time.Duration
 }
 
 // ServerOption allows the user to configure the handler.
@@ -91,6 +94,16 @@ func (f soptFn) SetServer(opts *options) { f(opts) }
 func WithOrigins(origins ...string) ServerOption {
 	return soptFn(func(opts *options) {
 		opts.origins = origins
+	})
+}
+
+// WithKeepAlive configures the server to send a GQL_CONNECTION_ACK
+// message periodically to keep the client connection alive.
+//
+func WithKeepAlive(period time.Duration) ServerOption {
+	return soptFn(func(opts *options) {
+		opts.keepAlive = true
+		opts.period = period
 	})
 }
 
