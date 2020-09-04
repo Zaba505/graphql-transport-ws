@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"sync"
@@ -173,7 +174,7 @@ type ConnectParams struct {
 // DefaultConnectParams is a default configuration for retrying with a backoff.
 var DefaultConnectParams = ConnectParams{
 	Backoff:           backoff.DefaultConfig,
-	MinConnectTimeout: 1 * time.Minute,
+	MinConnectTimeout: 20 * time.Second,
 }
 
 // WithConnectParams configures the client to use the provided ConnectParams.
@@ -247,10 +248,7 @@ func dial(ctx context.Context, endpoint string, dopts *dialOpts) (wc *websocket.
 
 	backoffIdx := 0
 	for {
-		dialDuration := minConnectTimeout
-		if dopts.minConnectTimeout != nil {
-			dialDuration = dopts.minConnectTimeout()
-		}
+		dialDuration := dopts.minConnectTimeout()
 
 		backoffFor := dopts.bs.Backoff(backoffIdx) // TODO count backoff
 		if dialDuration < backoffFor {
@@ -263,11 +261,12 @@ func dial(ctx context.Context, endpoint string, dopts *dialOpts) (wc *websocket.
 		if err == nil {
 			return
 		}
-		if ne, ok := err.(net.Error); !ok || (!ne.Timeout() && !ne.Temporary()) {
+		var ne net.Error
+		if !errors.As(err, &ne) || (!ne.Timeout() && !ne.Temporary()) {
 			return
 		}
 
-		timer := time.NewTimer(dialDuration)
+		timer := time.NewTimer(backoffFor)
 		select {
 		case <-timer.C:
 			backoffIdx++
