@@ -112,6 +112,8 @@ type handler struct {
 
 	wcOptions *websocket.AcceptOptions
 	mtyp      MessageType
+	keepAlive bool
+	period    time.Duration
 }
 
 // NewHandler configures an http.Handler, which will upgrade
@@ -127,8 +129,10 @@ func NewHandler(h Handler, opts ...ServerOption) http.Handler {
 	}
 
 	return &handler{
-		Handler: h,
-		mtyp:    sopts.typ,
+		Handler:   h,
+		keepAlive: sopts.keepAlive,
+		period:    sopts.period,
+		mtyp:      sopts.typ,
 		wcOptions: &websocket.AcceptOptions{
 			Subprotocols:         []string{"graphql-ws"},
 			OriginPatterns:       sopts.origins,
@@ -177,7 +181,25 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		switch msg.Type {
 		case gqlConnectionInit:
+			// TODO(zaba505): handle these errors errors
 			conn.write(ctx, operationMessage{Type: gqlConnectionAck})
+			if !h.keepAlive {
+				break
+			}
+
+			conn.write(ctx, operationMessage{Type: gqlConnectionKeepAlive})
+			go func() {
+				for {
+					timer := time.NewTimer(h.period)
+					select {
+					case <-timer.C:
+						conn.write(ctx, operationMessage{Type: gqlConnectionKeepAlive})
+					case <-ctx.Done():
+						timer.Stop()
+						return
+					}
+				}
+			}()
 			break
 		case gqlStart:
 			s := &Stream{
