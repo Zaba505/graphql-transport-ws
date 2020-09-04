@@ -37,7 +37,7 @@ func TestServerOptions(t *testing.T) {
 
 func TestServerKeepAlive(t *testing.T) {
 	opts := []ServerOption{
-		WithKeepAlive(2 * time.Second),
+		WithKeepAlive(500 * time.Millisecond),
 	}
 
 	srv := httptest.NewServer(NewHandler(HandlerFunc(testHandler), opts...))
